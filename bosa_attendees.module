@@ -3,9 +3,173 @@
  * bosa_attendees module
  *
  * @author Thomas Thune Hansen <tth@bellcom.dk>
- * @version $0.1
+ * @version $0.2
  * @copyright 2012 bellcom open source aps
  **/
+
+/**
+ * Implements hook_form_FORM_ID_alter()
+ */
+function bosa_attendees_form_commerce_order_ui_order_form_alter(&$form, &$form_state, $form_id){
+  if($form['#entity']->commerce_line_items){
+    foreach($form['#entity']->commerce_line_items as $line_item){
+      if(_bosa_attendees_lineitem_needs_attendees($line_item[0]['line_item_id'])){
+        $line_item_ids[] = $line_item[0]['line_item_id'];
+      }
+    }
+  }
+
+  $form['bosa_attendees'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Attendees'),
+    '#weight' => -10,
+    '#tree' => TRUE,
+  );
+
+  // Build form for line_items
+  // If there are any line_items that require names
+  if(!empty($line_item_ids)){
+    foreach($line_item_ids as $line_item_id){
+      $form['bosa_attendees'][$line_item_id] = array_shift(bosa_attendees_get_form_for_lineitem($line_item_id));
+    }
+  }
+
+  $form['actions']['submit']['#submit'][] = 'bosa_attendees_order_edit_submit';
+}
+
+/**
+ * Handle attendees on order edit
+ */
+function bosa_attendees_order_edit_submit($form, &$form_state){
+  foreach($form_state['values']['bosa_attendees'] as $line_item_id => $attendees){
+    $line_item = commerce_line_item_load($line_item_id);
+    // Use entity_metadata_wrapper to set attendees on line_item,
+    // tried with commerce_save on the obj, but didnt always work !?
+    $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
+
+    $line_item_wrapper->field_bosa_attendees_list->set(serialize($attendees));
+    $line_item_wrapper->save();;
+  }
+}
+
+/**
+ * Generate basic markup with attendees and age
+ *
+ * Generates unformatted list of attendees
+ */
+function bosa_attendees_get_attendees_markup($line_item, $first_attendee){
+  if(!empty($line_item->field_bosa_attendees_list)){
+
+    $attendee_names = unserialize($line_item->field_bosa_attendees_list[LANGUAGE_NONE][0]['value']);
+
+    foreach($attendee_names as $key => $value){
+      $key_exp = explode('-', $key);
+      if(!isset($key_exp[2])){
+        $attendee_array[$key_exp[1]][$key_exp[0]] = $value;
+      }
+    }
+
+    if($attendee_names['name-1-reuse'] ==1 ){
+      $attendee_array[1]['name'] = $first_attendee;
+    }
+
+
+    foreach($attendee_array as $attendee){
+      $attendee_markup .= '<p>';
+      $attendee_markup .= $attendee['name'];
+      if(isset($attendee['age'])){
+        $attendee_markup .= ' (' . $attendee['age'] . ')';
+      }
+      $attendee_markup .= '</p>';
+    }
+
+    return $attendee_markup;
+  }
+  return $first_attendee;
+}
+
+
+/**
+ * Build attendees form
+ *
+ */
+function bosa_attendees_get_form_for_lineitem($line_item_id){
+  drupal_add_js(drupal_get_path('module', 'bosa_attendees') . '/js/bosa_attendees_form.js');
+  $line_item = commerce_line_item_load($line_item_id);
+
+  if(!empty($line_item->field_bosa_attendees_list)){
+    $attendees =  unserialize(
+          $line_item->field_bosa_attendees_list[LANGUAGE_NONE][0]['value']);
+  }
+
+  $product = commerce_product_load_by_sku($line_item->line_item_label);
+
+  $title = $product->title;
+
+  if(isset($product->field_offer_dato)){
+    $title .= ': ' .  date('H:i:s, d/m-Y', strtotime($product->field_offer_dato[LANGUAGE_NONE][0]['value']));
+  }
+
+  $checkout_form[$line_item_id] = array(
+    '#type' => 'fieldset',
+    '#title' => $title,
+  );
+
+  // Add inputfields for each attendee
+  for($i = 1; $i <= (int)$line_item->quantity ; $i++){
+    $checkout_form[$line_item_id]['name-' . $i] = array(
+      '#title' => t('Attendee @id:', array('@id' => $i)),
+      '#type' => 'textfield',
+      '#description' => t(''),
+      '#required' => TRUE,
+      '#default_value' => isset($attendees['name-' . $i]) ? $attendees['name-' . $i] : '',
+    );
+
+    // For the first attendee we allow the user to use billing
+    // info name
+    if($i == 1){
+      $checkout_form[$line_item_id]['name-' . $i . '-reuse'] = array(
+        '#title' => t('Use billing name:'),
+        '#type' => 'checkbox',
+        '#default_value' => isset($attendees['name-' . $i . '-reuse']) ?
+                                                    $attendees['name-' . $i . '-reuse'] : TRUE,
+      );
+    }
+
+    // Check if the lineitem requires age as well.
+    if(_bosa_attendees_lineitem_needs_attendees_age($line_item_id)){
+      $checkout_form[$line_item_id]['age-' . $i] = array(
+        '#title' => t('Attendee @id age:', array('@id' => $i)),
+        '#type' => 'textfield',
+        '#description' => t(''),
+        '#required' => TRUE,
+        '#element_validate' => array('element_validate_integer_positive'),
+        '#default_value' => isset($attendees['age-' . $i]) ? $attendees['age-' . $i] : '',
+      );
+    }
+  }
+
+  return $checkout_form;
+}
+
+
+
+
+/**
+ * Implements hook_commerce_checkout_pane_info()
+ */
+function bosa_attendees_commerce_checkout_pane_info() {
+  $panes['bosa_attendees'] = array(
+    'title' => 'Attendees',
+    'page' => 'checkout',
+    'weight' => 10,
+    'file' => 'includes/bosa_attendees.checkout_pane.inc',
+    'base' => 'bosa_attendees_pane',
+  );
+  return $panes;
+}
+
+
 
 /*
  * Implements hook_cron()
@@ -20,28 +184,27 @@ function bosa_attendees_cron(){
 function bosa_attendees_menu() {
   $items['bosaattendees/test'] = array(
     'page callback' => 'bosa_attendees_test',
-   'access arguments' => array('access content'), 
+   'access arguments' => array('access content'),
   );
   $items['attendees'] = array(
    'page callback' => 'bosa_attendees_page',
-   'access arguments' => array('access content'), 
+   'access arguments' => array('access content'),
   );
   return $items;
 }
 
 /*
- * Implements hook block_info
+ * Implements hook_block_info()
  */
 function bosa_attendees_block_info() {
   $blocks['bosa_attendees'] = array(
     'info' => t('List of attendees'),
   );
-
   return $blocks;
 }
 
 /*
- * Implements hook block_view
+ * Implements hook_block_view()
  */
 function bosa_attendees_block_view($delta = '') {
 
@@ -56,9 +219,20 @@ function bosa_attendees_block_view($delta = '') {
   drupal_add_js('jQuery(document).ready(function(){jQuery( "#edit-offer-date" ).datepicker({
 
       autoSize: true
-    }).attr("readonly", true);});', 'inline'); 
+    }).attr("readonly", true);});', 'inline');
 
   return $block;
+}
+
+/**
+ * Implements hook_page_alter()
+ */
+function bosa_attendees_page_alter(&$page) {
+  if(arg(0) == 'attendees'){
+    unset($page['page_top']);
+    unset($page['footer']);
+    unset($page['above-header']);
+  }
 }
 
 function main_page() {
@@ -70,8 +244,8 @@ function bosa_attendees_form($form, &$form_state) {
   // Fetch a list of product names for the dropdown
   $productsQuery = new EntityFieldQuery();
   $productsQuery->entityCondition('entity_type', 'commerce_product')
-   ->fieldCondition('field_offer_dato', 'value', 'NOW()', '<'); 
- 
+   ->propertyOrderBy('title', 'ASC');
+
   $products = $productsQuery->execute();
 
   $offerOptions = array('0' => 'Vælg');
@@ -79,12 +253,18 @@ function bosa_attendees_form($form, &$form_state) {
   {
     foreach( $products['commerce_product'] as $product)
     {
-      $entity = entity_load('commerce_product', array($product->product_id));
-      $offerOptions = $offerOptions + array( $entity[$product->product_id]->sku => $entity[$product->product_id]->title . ' - ' .$entity[$product->product_id]->field_offer_dato[LANGUAGE_NONE][0]['value']); 
+      // Check for permissions if bosa_products module is installed
+      if(function_exists('bosa_products_permissions_check')){
+        if(!bosa_products_permissions_check($product->product_id, $user->uid)){
+          continue;
+        }
+      }
+        $entity = entity_load('commerce_product', array($product->product_id));
+        $offerOptions = $offerOptions + array( $entity[$product->product_id]->sku => substr($entity[$product->product_id]->title, 0, 20) . '(...) - ' .$entity[$product->product_id]->sku . ' - ' . $entity[$product->product_id]->field_offer_dato[LANGUAGE_NONE][0]['value']);
     }
   }
 
-  // build the forms 
+  // build the forms
   // products
   $form = array();
   $form['products'] = array(
@@ -119,6 +299,9 @@ function _bosa_attendees_offer_callback($form, $form_state) {
   return '<div id="replace_textfield_div"><div class="print-page"><a href="'.$link.'">Udskriv</a></div>' . _bosa_attendees_by_sku($form_state['values']['products']).  '</div>';
 }
 
+/**
+ * Form callback for date selection
+ */
 function _bosa_attendees_offer_callback_date($form, $form_state) {
   // first we format the date
   $date_array = explode('/', $form_state['values']['offer_date']);
@@ -127,26 +310,31 @@ function _bosa_attendees_offer_callback_date($form, $form_state) {
   // then we query for products with given date
   $productsQuery = new EntityFieldQuery();
   $productsQuery->entityCondition('entity_type', 'commerce_product')
-    ->entityCondition('bundle', 'offer')
-  ->fieldCondition('field_offer_dato', 'value', $date, 'LIKE'); 
+  ->fieldCondition('field_offer_dato', 'value', $date, 'LIKE');
 
   $products = $productsQuery->execute();
 
   $products_object = reset($products);
 
   foreach($products_object as $product){
-
-    // first we need to get the sku's for the products on this date
+    // Check for permissions if bosa_products module is installed
+    if(function_exists('bosa_products_permissions_check')){
+      if(!bosa_products_permissions_check($product->product_id, $user->uid)){
+        continue;
+      }
+    }
+    // First we need to get the sku's for the products on this date
     $entity = entity_load('commerce_product', array($product->product_id));
-    $product_sku = $entity[$product->product_id]->sku; 
+    $product_sku = $entity[$product->product_id]->sku;
 
     $attendees .= '<div class="sku-title">'.$product_sku.'</div>';
     $attendees .= _bosa_attendees_by_sku($product_sku);
 
-  }   
+  }
   return '<div id="replace_textfield_div">' . $attendees .  '</div>';
 
 }
+
 
 function _bosa_attendees_by_sku($product_sku) {
   $product = commerce_product_load_by_sku($product_sku);
@@ -154,12 +342,13 @@ function _bosa_attendees_by_sku($product_sku) {
 
   $lineItemQuery = new EntityFieldQuery();
   $lineItemQuery->entityCondition('entity_type', 'commerce_line_item')
-   ->propertyCondition('line_item_label', $product_sku, '='); 
-  
+   ->propertyCondition('line_item_label', $product_sku, '=');
+
   $lineItems = $lineItemQuery->execute();
 
+
   if(!empty($lineItems)) {
-    foreach ($lineItems['commerce_line_item'] as $lineItem) 
+    foreach ($lineItems['commerce_line_item'] as $lineItem)
     {
       $attendees = _bosa_attendees_from_line_item_id($lineItem->line_item_id);
       if(!empty($attendees))
@@ -170,7 +359,7 @@ function _bosa_attendees_by_sku($product_sku) {
         {
           $end = end($allAttendees);
         }
-        
+
         if($end['order_id'] == $attendees['order_id'] && $end['comment'] == $attendees['comment'])
         {
 
@@ -181,19 +370,43 @@ function _bosa_attendees_by_sku($product_sku) {
           $allAttendees[] = $attendees;
         }
       }
-    } 
-  }
-  
-  if($extraLineItems['commerce_line_item'])
-  {
-    foreach ($extraLineItems['commerce_line_item'] as $extraLineItem)
-    {
-      $values = _bosa_attendees_extras_load_values($extraLineItem->line_item_id);
-      $extraValues[$values['order_id']][] = $values;
-      //load product for lineitem
     }
   }
-  return _bosa_attendees_html($allAttendees, $extraValues);
+
+  foreach($extraLineItems as $product_sku => $line_item_ids){
+    $extraAttendees = array();
+
+    foreach($line_item_ids as $line_item_id){
+      $attendees = _bosa_attendees_from_line_item_id($line_item_id);
+      $extraAttendees[] = $attendees;
+
+    }
+
+    $extras_html .= '<table><tr><td><h3>' . t('Extra product:') .' '. $attendees['product_title'] . '</h3></td></tr><tr><td></td><td>'.t('Price:').'  '.$attendees['product_price'].'</td></tr></table>';
+    $extras_html .= _bosa_attendees_html($extraAttendees);
+  }
+
+  $nodeQuery = new EntityFieldQuery();
+
+  $nodeQuery->entityCondition('entity_type', 'node')
+      ->fieldCondition('field_reference', 'product_id', $product->product_id, '=');
+
+  $nodeResult = $nodeQuery->execute();
+
+  $title = '';
+  if(is_array($nodeResult['node'])){
+    $node = node_load(key($nodeResult['node']));
+    $title = $node->title;
+  }
+
+  $price = commerce_currency_format($product->commerce_price[LANGUAGE_NONE][0]['amount'], $product->commerce_price[LANGUAGE_NONE][0]['currency_code']);
+  $second_price = commerce_currency_format($product->field_2nd_price[LANGUAGE_NONE][0]['amount'], $product->field_2nd_price[LANGUAGE_NONE][0]['currency_code']);
+
+  $dateandtime = strtotime($product->field_offer_dato[LANGUAGE_NONE][0]['value']);
+  $dateandtime = date('d-m-Y G:i:s', $dateandtime);
+  $header = '<table><tr><td class="header"><h3>'.$title.'</h3><p>' .$product->title .' '. $dateandtime .'</p></td></tr><tr><td>'.t('Prices:').'</td><td>'.t('Reg.:').'</td><td>'.$price.'</td></tr><tr><td></td><td>'.t('2nd:').'</td><td>'.$second_price.'</td></tr></table>';
+
+  return $header . _bosa_attendees_html($allAttendees) . $extras_html;
 
 }
 
@@ -208,6 +421,8 @@ function _bosa_attendees_from_line_item_id($line_item_id)
   $lineItemsEntity= entity_load('commerce_line_item', array($line_item_id));
   $lineItemEntity = reset($lineItemsEntity);
 
+  $product = commerce_product_load_by_sku($lineItemEntity->line_item_label);
+
   $orderEntity = entity_load('commerce_order', array($lineItemEntity->order_id));
 
   $orderEntity = reset($orderEntity);
@@ -216,12 +431,12 @@ function _bosa_attendees_from_line_item_id($line_item_id)
 
   if(isset($orderEntity->status))
   {
-    if ($orderEntity->status == 'completed')
+    if ($orderEntity->status !== 'canceled' || $orderEntity->status !== 'cart')
     {
       $wrapper = entity_metadata_wrapper('commerce_order', $orderEntity);
       $address = $wrapper->commerce_customer_billing->commerce_customer_address->value();
       $phone = $wrapper->commerce_customer_billing->field_mobile_phone->value();
-      
+
       $attendees = array(
         'name' => $address['name_line'],
         'phone' => $phone,
@@ -230,10 +445,13 @@ function _bosa_attendees_from_line_item_id($line_item_id)
         'comment' => $comment,
         'line_item_id' => $lineItemEntity->line_item_id,
         'product_sku' => $lineItemEntity->line_item_label,
+        'product_title' => $product->title,
+        'price' => commerce_currency_format($lineItemEntity->commerce_total[LANGUAGE_NONE][0]['amount'], $lineItemEntity->commerce_total[LANGUAGE_NONE][0]['currence_code']),
+        'product_price' => commerce_currency_format($product->commerce_price[LANGUAGE_NONE][0]['amount'], $lineItemEntity->commerce_price[LANGUAGE_NONE][0]['currence_code']),
       );
     }
   }
-  if(isset($attendees)) 
+  if(isset($attendees))
   {
     return $attendees;
   }
@@ -246,6 +464,10 @@ function bosa_attendees_page($id, $key, $print = null){
   {
     if($print == "print") {
       drupal_add_js('window.print();', array('type' => 'inline'));
+      $css = '#page{font-size: 80%; font-family: sans; }';
+
+      drupal_add_css($css,$option['type'] = 'inline');
+
     }
     return '<div class="pane-bosa-attendees-bosa-attendees">'. _bosa_attendees_offer_callback(array(), array('values' => array('products' => $entity->sku) )) .'</div>';
   }
@@ -258,74 +480,51 @@ function bosa_attendees_test($id, $key){
 function _bosa_attendees_extras_by_product_id($productId) {
   $lineItemQuery = new EntityFieldQuery();
   $lineItemQuery->entityCondition('entity_type', 'commerce_line_item')
-    ->fieldCondition('field_line_item_ref', 'value', $productId); 
-  
-  $lineItems = $lineItemQuery->execute(); 
+    ->fieldCondition('field_line_item_ref', 'value', $productId);
 
-  return $lineItems;
+  $lineItems = $lineItemQuery->execute();
+  $extras = array();
+
+  if(is_array($lineItems['commerce_line_item'])){
+    foreach($lineItems['commerce_line_item'] as $key => $value){
+
+      $lineItemsEntity= entity_load('commerce_line_item', array($key));
+      $lineItemsEntity = reset($lineItemsEntity);
+
+      $extras[$lineItemsEntity->line_item_label][] = $lineItemsEntity->line_item_id;
+    }
+  }
+  return $extras;
 }
 
-function _bosa_attendees_extras_load_values($lineItemId) {
-  $lineItemEntity = reset(entity_load('commerce_line_item', array($lineItemId)));
+function _bosa_attendees_html($allAttendees) {
+  $rows = array();
+  $extras_rows = array();
 
-  $comment = isset($lineItemEntity->field_line_item_comment[LANGUAGE_NONE][0]['value']) ? $lineItemEntity->field_line_item_comment[LANGUAGE_NONE][0]['value'] : '-';
-  $product = commerce_product_load_by_sku($lineItemEntity->line_item_label);
+  $header = array(t('Order number:'), t('Name:'), t('Phone number:'), t('Quantity:'), t('Comment:'), t('Price:'));
 
-  $values = array(
-    'product_sku' => $product->sku,
-    'product_title' => $product->title,
-    'quantity' => (int)$lineItemEntity->quantity,
-    'comment' => $comment,
-    'order_id' => $lineItemEntity->order_id,
-    'line_item_id' => $lineItemEntity->line_item_id,
-  );
-
-  return $values; 
-}
-
-function _bosa_attendees_html($allAttendees, $extraValues) {
-  $offerAttendees = '<div class="title"><div class="name">Navn:</div><div class="phone">Telefonnr:</div><div class="quantity">antal:</div><div class="comment">kommentar:</div></div>';
-
-  $i = "";
-  
   if(!empty($allAttendees)){
     foreach($allAttendees as $attendee)
     {
-      $i++;
-      $row = $i%2? "odd": "even";
-      
-      $offerAttendees .= '<div class="'.$row.'">';
-      //display product
-      $offerAttendees .= '<div class="name">'.$attendee['name'] .'</div>';
-      $offerAttendees .= '<div class="phone">'.$attendee['phone'] .'</div>';
-      $offerAttendees .= '<div class="quantity">'.$attendee['quantity'].'</div>';
-      //display comment
-      $offerAttendees .= '<div class="comment">'.$attendee['comment'] .'</div>';
 
-      if(isset($extraValues[$attendee['order_id']]))
-      {
-        $offerAttendees .= '<div class="extras">';
-        
-        foreach($extraValues[$attendee['order_id']] as $extra )
-        {
-          $offerAttendees .= '<div class="sku">' .$extra['product_sku'] .'</div>';
-          $offerAttendees .= '<div class="quantity">' .$extra['quantity'] .'</div>';
-          $offerAttendees .= '<div class="comment">' .$extra['comment'] .'</div>';
-        }
-
-        $offerAttendees .= '</div>';
+      $order_id = $attendee['order_id'];
+      if($prevorderid == $attendee['order_id']){
+        $order_id = '';
+        $attendee['phone'] = '';
       }
-      $offerAttendees .= '</div>';
+      $prevorderid = $attendee['order_id'];
+      $rows[] = array($order_id, $attendee['name'], $attendee['phone'], $attendee['quantity'], $attendee['comment'], $attendee['price']);
+
       $number_of_attendees += $attendee['quantity'];
     }
   }
-  else 
+  else
   {
-    $offerAttendees .= '<div class="name">Ingen deltagere</div>';
-
+    $rows[] = array(t('No attendees'), '', '', '', '', '');
   }
+  $rows[] = array(t('Total:'), '', '', $number_of_attendees, '', '');
 
-  $offerAttendees .= '<div class="number_of_attendees_title">Deltagere i alt:</div><div class="number_of_attendees">'.$number_of_attendees.'</div>';
+  $offerAttendees .= theme('table', array('header' => $header, 'rows' =>  $rows));
 
   return $offerAttendees;
 }
@@ -337,64 +536,91 @@ function bosa_attendees_send_mail(){
 
   $ids = unserialize(variable_get('bosa_attendees_sent_list_ids'));
   $tomorrow  = date('Y-m-d', strtotime("tomorrow"));
-  
+
   //get product skus for tomorrow
   $productsQuery = new EntityFieldQuery();
   $productsQuery->entityCondition('entity_type', 'commerce_product')
-   ->fieldCondition('field_offer_dato', 'value', $tomorrow .' 00:00:00', '>') 
-   ->fieldCondition('field_offer_dato', 'value', $tomorrow .' 23:59:59', '<'); 
- 
+   ->fieldCondition('field_offer_dato', 'value', $tomorrow .' 00:00:00', '>')
+   ->fieldCondition('field_offer_dato', 'value', $tomorrow .' 23:59:59', '<');
+
   $products = reset($productsQuery->execute());
   if($products){
-  //loop over, fetch attendees and send mail
-  foreach($products as $product)
-  {
-
-    $entity = reset(entity_load('commerce_product', array($product->product_id)));
-
-    if
-    (
-      isset($entity->field_seller_email[LANGUAGE_NONE][0]['email']) 
-      &&
-      !in_array($entity->product_id, $ids)
-    )
+    //loop over, fetch attendees and send mail
+    foreach($products as $product)
     {
-      global $base_url;
 
-      $key = md5($entity->sku);
-      $attendees = 'Du kan se deltagerlisten her:'. strip_tags($base_url) .'/attendees/'. $entity->product_id .'/'.$key ;
-      //error_log(__FILE__.':'.__LINE__. print_r($attendees, 1)); // tth@bellcom.dk debugging
+      $entity = reset(entity_load('commerce_product', array($product->product_id)));
 
-      $email = $entity->field_seller_email[LANGUAGE_NONE][0]['email'];
-      $module = 'bosa_attendees';
-      $key = 'key';
-      $language = language_default();
-      $params = array();
-      $from = NULL;
-      $send = FALSE;
+      if
+      (
+        isset($entity->field_seller_email[LANGUAGE_NONE][0]['email'])
+        &&
+        !in_array($entity->product_id, $ids)
+      )
+      {
+        global $base_url;
 
-      // build mail
-      $message = drupal_mail($module, $key, $email, $language, $params, $from, $send);
-      //$message['headers']['Content-Type'] = 'text/html; charset=UTF-8; format=flowed';
-      $message['subject'] = 'Deltagerliste: ' . $entity->sku;
-      $message['body'][] = $attendees;
+        $key = md5($entity->sku);
+        $attendees = 'Du kan se deltagerlisten her:'. strip_tags($base_url) .'/attendees/'. $entity->product_id .'/'.$key ;
+        //error_log(__FILE__.':'.__LINE__. print_r($attendees, 1)); // tth@bellcom.dk debugging
 
-      // Retrieve the responsible implementation for this message.
-      $system = drupal_mail_system($module, $key);
+        $email = $entity->field_seller_email[LANGUAGE_NONE][0]['email'];
+        $module = 'bosa_attendees';
+        $key = 'key';
+        $language = language_default();
+        $params = array();
+        $from = NULL;
+        $send = FALSE;
 
-      // Format the message body.
-      $message = $system->format($message);
+        // build mail
+        $message = drupal_mail($module, $key, $email, $language, $params, $from, $send);
+        //$message['headers']['Content-Type'] = 'text/html; charset=UTF-8; format=flowed';
+        $message['subject'] = 'Deltagerliste: ' . $entity->sku;
+        $message['body'][] = $attendees;
 
-      // Send e-mail.
-      $message['result'] = $system->mail($message);
+        // Retrieve the responsible implementation for this message.
+        $system = drupal_mail_system($module, $key);
 
-      //error_log(__FILE__.':'.__LINE__. print_r($message, 1)); // tth@bellcom.dk debugging
-      $ids[] = $entity->product_id;
+        // Format the message body.
+        $message = $system->format($message);
 
+        // Send e-mail.
+        $message['result'] = $system->mail($message);
+
+        //error_log(__FILE__.':'.__LINE__. print_r($message, 1)); // tth@bellcom.dk debugging
+        $ids[] = $entity->product_id;
+
+      }
     }
-  }
-  variable_set('bosa_attendees_sent_list_ids', serialize($ids));
-}
+    variable_set('bosa_attendees_sent_list_ids', serialize($ids));
+    }
 }
 
 
+/**
+ * Check if the product wants a list of attendees.
+ */
+function _bosa_attendees_lineitem_needs_attendees($line_item_id){
+  $query = 'SELECT field_bosa_attendees_value
+            FROM  `commerce_line_item` li
+            LEFT JOIN  `commerce_product` p ON p.sku = li.line_item_label
+            LEFT JOIN  `field_data_field_bosa_attendees` a ON p.product_id = a.entity_id
+            WHERE li.line_item_id = :line_item_id';
+
+  $result = db_query($query, array(':line_item_id' => $line_item_id))->fetchObject();
+  return $result->field_bosa_attendees_value == 1;
+}
+
+/**
+ * Check if the product wants attendee ages.
+ */
+function _bosa_attendees_lineitem_needs_attendees_age($line_item_id){
+  $query = 'SELECT field_bosa_attendees_age_value
+            FROM  `commerce_line_item` li
+            LEFT JOIN  `commerce_product` p ON p.sku = li.line_item_label
+            LEFT JOIN  `field_data_field_bosa_attendees_age` a ON p.product_id = a.entity_id
+            WHERE li.line_item_id = :line_item_id';
+
+  $result = db_query($query, array(':line_item_id' => $line_item_id))->fetchObject();
+  return $result->field_bosa_attendees_age_value == 1;
+}
