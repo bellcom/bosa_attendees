@@ -160,7 +160,7 @@ function bosa_attendees_get_form_for_lineitem($line_item_id){
  */
 function bosa_attendees_commerce_checkout_pane_info() {
   $panes['bosa_attendees'] = array(
-    'title' => 'Attendees',
+    'title' => t('Attendees'),
     'page' => 'checkout',
     'weight' => 10,
     'file' => 'includes/bosa_attendees.checkout_pane.inc',
