@@ -16,12 +16,14 @@ function bosa_attendees_pane_checkout_form($form, $form_state, $checkout_pane, $
 
   // Loop over line_items and check if they require attendee names.
   if($order->commerce_line_items){
-    foreach($order->commerce_line_items as $line_item){
-      if(_bosa_attendees_lineitem_needs_attendees($line_item[0]['line_item_id'])){
-        $line_item_ids[] = $line_item[0]['line_item_id'];
+    foreach($order->commerce_line_items[LANGUAGE_NONE] as $key => $line_item){
+      if(_bosa_attendees_lineitem_needs_attendees($line_item['line_item_id'])){
+        $line_item_ids[] = $line_item['line_item_id'];
       }
     }
   }
+
+  error_log(print_r($line_item_ids, 1));
 
   // Build form for line_items
   // If there are any line_items that require names

@@ -12,9 +12,9 @@
  */
 function bosa_attendees_form_commerce_order_ui_order_form_alter(&$form, &$form_state, $form_id){
   if($form['#entity']->commerce_line_items){
-    foreach($form['#entity']->commerce_line_items as $line_item){
-      if(_bosa_attendees_lineitem_needs_attendees($line_item[0]['line_item_id'])){
-        $line_item_ids[] = $line_item[0]['line_item_id'];
+    foreach($form['#entity']->commerce_line_items[LANGUAGE_NONE] as $key => $line_item){
+      if(_bosa_attendees_lineitem_needs_attendees($line_item['line_item_id'])){
+        $line_item_ids[] = $line_item['line_item_id'];
       }
     }
   }
