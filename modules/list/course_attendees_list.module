@@ -1,0 +1,95 @@
+<?php
+/**
+ * course_attendees_list module
+ *
+ * @author Thomas Thune Hansen <tth@bellcom.dk>
+ **/
+
+/**
+ * Implements hook_menu()
+ */
+function course_attendees_list_menu(){
+  $items['admin/commerce/attendees'] = array(
+    'page callback' => 'course_attendees_list_page',
+    'access arguments' => array('see attendees lists'),
+    'title' => t('Attendee lists'),
+    'description' => t('See a list of attendees for each product'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  $items['admin/commerce/products/%/attendees'] = array(
+    'title' => t('Attendees'),
+    'page callback' => 'course_attendees_list_product_page',
+    'page arguments' => array(3),
+    'access arguments' => array('see attendees list'),
+    'type' => MENU_LOCAL_TASK,
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_permission()
+ */
+function course_attendees_list_permission(){
+  return array();
+}
+
+/**
+ * Page callback for attendee overview
+ */
+function course_attendees_list_page(){
+  return 'List of products';
+}
+
+/**
+ * Page callback for product attendees
+ */
+function course_attendees_list_product_page($product_id){
+  $line_item_ids = course_attendees_list_get_line_items($product_id);
+  $attendees = course_attendees_list_get_attendees($line_item_ids);
+  return theme('table', array('rows' => $attendees));
+}
+
+function course_attendees_list_get_line_items($product_id){
+  $query = new EntityFieldQuery();
+
+  $query
+    ->entityCondition('entity_type', 'commerce_line_item', '=')
+    ->entityCondition('bundle', 'product', '=')
+    ->fieldCondition('commerce_product', 'product_id', $product_id, '=');
+  $result = $query->execute();
+  return array_keys(array_shift($result));
+}
+
+function course_attendees_list_get_attendees($line_item_ids){
+  $attendees = array();
+  $line_items = commerce_line_item_load_multiple($line_item_ids);
+
+  foreach($line_items as $line_item){
+    $order = commerce_order_load($line_item->order_id);
+
+    // Skip uncompleted orders
+    if($order->status !== 'completed'){
+      //continue;
+    }
+    $attendees_list[$line_item->line_item_id] = course_attendees_get_attendees_for_line_item($line_item);
+    $checkout_data[$line_item->line_item_id] = checkout_webform_get_data_for_line_item($line_item);
+  }
+
+
+  foreach($attendees_list as $line_item_id => $list){
+    reset($checkout_data[$line_item_id]);
+    foreach($list as $attendee){
+      $attendees[] = array(
+        $attendee['name'],
+        $attendee['psn'],
+        array_shift($checkout_data[$line_item_id]),
+        array_shift($checkout_data[$line_item_id]),
+      );
+    }
+  }
+  return $attendees;
+}
+
+

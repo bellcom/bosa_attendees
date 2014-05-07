@@ -1,5 +1,5 @@
 (function($){
-  Drupal.behaviors.bosa_attendees = {
+  Drupal.behaviors.course_attendees = {
     attach: function(context, settings){
       $("[id*='name-1-reuse']").each(function(){
         $checkbox = $(this);

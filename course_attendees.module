@@ -1,0 +1,212 @@
+<?php
+/**
+ * course_attendees module
+ *
+ * @author Thomas Thune Hansen <tth@bellcom.dk>
+ */
+
+/**
+ * Implements hook_form_FORM_ID_alter()
+ */
+function course_attendees_form_commerce_order_ui_order_form_alter(&$form, &$form_state, $form_id){
+  if($form['#entity']->commerce_line_items){
+    foreach($form['#entity']->commerce_line_items[LANGUAGE_NONE] as $key => $line_item){
+      if(_course_attendees_lineitem_needs_attendees($line_item['line_item_id'])){
+        $line_item_ids[] = $line_item['line_item_id'];
+      }
+    }
+  }
+
+  $form['course_attendees'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Attendees'),
+    '#weight' => -10,
+    '#tree' => TRUE,
+  );
+
+  // Build form for line_items
+  // If there are any line_items that require names
+  if(!empty($line_item_ids)){
+    foreach($line_item_ids as $line_item_id){
+      $form['course_attendees'][$line_item_id] = array_shift(course_attendees_get_form_for_lineitem($line_item_id));
+    }
+  }
+
+  $form['actions']['submit']['#submit'][] = 'course_attendees_order_edit_submit';
+}
+
+/**
+ * Handle attendees on order edit
+ */
+function course_attendees_order_edit_submit($form, &$form_state){
+  foreach($form_state['values']['course_attendees'] as $line_item_id => $attendees){
+    $line_item = commerce_line_item_load($line_item_id);
+    // Use entity_metadata_wrapper to set attendees on line_item,
+    // tried with commerce_save on the obj, but didnt always work !?
+    $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
+
+    $line_item_wrapper->field_attendees_list->set(serialize($attendees));
+    $line_item_wrapper->save();;
+  }
+}
+
+/**
+ * Generate basic markup with attendees and psn
+ *
+ * Generates unformatted list of attendees
+ */
+function course_attendees_get_attendees_markup($line_item, $first_attendee){
+  if(!empty($line_item->field_attendees_list)){
+    $attendee_names = unserialize($line_item->field_attendees_list[LANGUAGE_NONE][0]['value']);
+
+    foreach($attendee_names as $key => $value){
+      $key_exp = explode('-', $key);
+      if(!isset($key_exp[2])){
+        $attendee_array[$key_exp[1]][$key_exp[0]] = $value;
+      }
+    }
+
+    if($attendee_names['name-1-reuse'] == 1 ){
+      $attendee_array[1]['name'] = $first_attendee;
+    }
+
+    foreach($attendee_array as $attendee){
+      $attendee_markup .= '<p>';
+      $attendee_markup .= $attendee['name'];
+      if(isset($attendee['psn'])){
+        $attendee_markup .= ' (' . $attendee['psn'] . ')';
+      }
+      $attendee_markup .= '</p>';
+    }
+
+    return $attendee_markup;
+  }
+  return $first_attendee;
+}
+
+
+/**
+ * Build attendees form
+ *
+ */
+function course_attendees_get_form_for_lineitem($line_item_id){
+  drupal_add_js(drupal_get_path('module', 'course_attendees') . '/js/course_attendees_form.js');
+  $line_item = commerce_line_item_load($line_item_id);
+
+  if(!empty($line_item->field_attendees_list)){
+    $attendees =  unserialize(
+          $line_item->field_attendees_list[LANGUAGE_NONE][0]['value']);
+  }
+
+  $product = commerce_product_load_by_sku($line_item->line_item_label);
+
+  $title = $product->title;
+
+  if(isset($product->field_offer_dato)){
+    $title .= ': ' .  date('H:i:s, d/m-Y', strtotime($product->field_offer_dato[LANGUAGE_NONE][0]['value']));
+  }
+
+  $checkout_form[$line_item_id] = array(
+    '#type' => 'fieldset',
+    '#title' => $title,
+  );
+
+  // Add inputfields for each attendee
+  for($i = 1; $i <= (int)$line_item->quantity ; $i++){
+    $checkout_form[$line_item_id]['name-' . $i] = array(
+      '#title' => t('Attendee @id:', array('@id' => $i)),
+      '#type' => 'textfield',
+      '#description' => t(''),
+      '#required' => TRUE,
+      '#default_value' => isset($attendees['name-' . $i]) ? $attendees['name-' . $i] : '',
+    );
+
+    // For the first attendee we allow the user to use billing
+    // info name
+    if($i == 1){
+      $checkout_form[$line_item_id]['name-' . $i . '-reuse'] = array(
+        '#title' => t('Use billing name:'),
+        '#type' => 'checkbox',
+        '#default_value' => isset($attendees['name-' . $i . '-reuse']) ?
+                                                    $attendees['name-' . $i . '-reuse'] : TRUE,
+      );
+    }
+
+    // Check if the lineitem requires psn as well.
+    if(_course_attendees_lineitem_needs_attendees_psn($line_item_id)){
+      $checkout_form[$line_item_id]['psn-' . $i] = array(
+        '#title' => t('Attendee @id PSN:', array('@id' => $i)),
+        '#type' => 'textfield',
+        '#description' => t(''),
+        '#required' => TRUE,
+        '#element_validate' => array('_attendee_validate_psn'),
+        '#default_value' => isset($attendees['psn-' . $i]) ? $attendees['psn-' . $i] : '',
+      );
+    }
+  }
+
+  return $checkout_form;
+}
+
+/**
+ * Implements hook_commerce_checkout_pane_info()
+ */
+function course_attendees_commerce_checkout_pane_info() {
+  $panes['course_attendees'] = array(
+    'title' => t('Attendees'),
+    'ppsn' => 'checkout',
+    'weight' => 10,
+    'file' => 'includes/course_attendees.checkout_pane.inc',
+    'base' => 'course_attendees_pane',
+  );
+  return $panes;
+}
+
+function course_attendees_get_attendees_for_line_item($line_item){
+  if($field_attendees_list = field_get_items('commerce_line_item', $line_item, 'field_attendees_list')){
+    $attendees_list = unserialize($field_attendees_list[0]['value']);
+    foreach($attendees_list as $key => $attendee_item){
+      $exp = explode('-', $key);
+      $attendees[$exp[1]][$exp[0]] = $attendee_item;
+    }
+  }
+
+  return $attendees;
+}
+
+/**
+ * Check if the product wants a list of attendees.
+ */
+function _course_attendees_lineitem_needs_attendees($line_item_id){
+  $query = 'SELECT field_attendees_name_value
+            FROM  `commerce_line_item` li
+            LEFT JOIN  `commerce_product` p ON p.sku = li.line_item_label
+            LEFT JOIN  `field_data_field_attendees_name` a ON p.product_id = a.entity_id
+            WHERE li.line_item_id = :line_item_id';
+
+  $result = db_query($query, array(':line_item_id' => $line_item_id))->fetchObject();
+  return $result->field_attendees_name_value == 1;
+}
+
+/**
+ * Check if the product wants attendee psn.
+ */
+function _course_attendees_lineitem_needs_attendees_psn($line_item_id){
+  $query = 'SELECT field_attendees_psn_value
+            FROM  `commerce_line_item` li
+            LEFT JOIN  `commerce_product` p ON p.sku = li.line_item_label
+            LEFT JOIN  `field_data_field_attendees_psn` a ON p.product_id = a.entity_id
+            WHERE li.line_item_id = :line_item_id';
+
+  $result = db_query($query, array(':line_item_id' => $line_item_id))->fetchObject();
+  return $result->field_attendees_psn_value == 1;
+}
+
+/**
+ * Validate PSN input
+ */
+function _attendee_validate_psn($element, $form_state){
+  if(!empty($element['#value']) && !preg_match("/^[0-9]{6}-[0-9]{4}$/", $element['#value'])){
+    form_error($element, t('Wrong format'));
+  }
+}

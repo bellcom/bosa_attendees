@@ -1,0 +1,5 @@
+name = Course attendees
+description = Get name and PSN on checkout 
+core = 7.x
+version = 7.x-0.1-dev
+dependencies[] = commerce
