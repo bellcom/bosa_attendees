@@ -167,6 +167,9 @@ function course_attendees_get_attendees_for_line_item($line_item){
     $attendees_list = unserialize($field_attendees_list[0]['value']);
     foreach($attendees_list as $key => $attendee_item){
       $exp = explode('-', $key);
+      if(isset($exp[2])){
+        continue;
+      }
       $attendees[$exp[1]][$exp[0]] = $attendee_item;
     }
   }

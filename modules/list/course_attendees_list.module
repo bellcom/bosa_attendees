@@ -39,7 +39,7 @@ function course_attendees_list_permission(){
  * Page callback for attendee overview
  */
 function course_attendees_list_page(){
-  return 'List of products';
+  return views_embed_view('course_attendees', 'block');
 }
 
 /**
@@ -47,8 +47,29 @@ function course_attendees_list_page(){
  */
 function course_attendees_list_product_page($product_id){
   $line_item_ids = course_attendees_list_get_line_items($product_id);
+
+  if(arg(5) == 'export'){
+    $attendees = course_attendees_list_get_attendees($line_item_ids, TRUE);
+    course_attendees_export_csv($attendees);
+  }
+
   $attendees = course_attendees_list_get_attendees($line_item_ids);
-  return theme('table', array('rows' => $attendees));
+  return theme('table', $attendees);
+}
+
+function course_attendees_export_csv($attendees){
+  $filename = 'file.csv';
+  header( "Content-Type: text/csv;charset=utf-8" );
+  header( "Content-Disposition: attachment;filename=\"$filename\"" );
+  header("Pragma: no-cache");
+  header("Expires: 0");
+
+  $fp = fopen('php://output', 'w');
+  fputcsv($fp, $attendees['header']);
+  foreach ($attendees['rows'] as $fields){
+    fputcsv($fp, $fields);
+  }
+  die(fclose($fp));
 }
 
 function course_attendees_list_get_line_items($product_id){
@@ -62,7 +83,7 @@ function course_attendees_list_get_line_items($product_id){
   return array_keys(array_shift($result));
 }
 
-function course_attendees_list_get_attendees($line_item_ids){
+function course_attendees_list_get_attendees($line_item_ids, $full = FALSE){
   $attendees = array();
   $line_items = commerce_line_item_load_multiple($line_item_ids);
 
@@ -79,17 +100,24 @@ function course_attendees_list_get_attendees($line_item_ids){
 
 
   foreach($attendees_list as $line_item_id => $list){
-    reset($checkout_data[$line_item_id]);
     foreach($list as $attendee){
       $attendees[] = array(
         $attendee['name'],
-        $attendee['psn'],
-        array_shift($checkout_data[$line_item_id]),
-        array_shift($checkout_data[$line_item_id]),
+        isset($attendee['psn']) ? $attendee['psn'] : FALSE,
       );
+
+      $header = array('Navn', 'CPR');
+
+      if($full){
+        foreach($checkout_data[$line_item_id] as $key => $data){
+          $attendees[count($attendees) -1][$key] = $data;
+          $header[] = $key;
+        }
+      }
     }
   }
-  return $attendees;
+
+  return array('header' => $header, 'rows' => $attendees);
 }
 
 
